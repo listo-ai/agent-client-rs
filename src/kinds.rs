@@ -1,9 +1,12 @@
-//! Kind operations — `GET /api/v1/kinds`.
+//! Kind palette operations — hits `GET /api/v1/search?scope=kinds`.
 //!
-//! Backed by the RSQL query surface documented in
-//! `docs/design/QUERY-LANG.md`: `filter` + `sort` expressions over
-//! `id` / `org` / `display_name` / `facets` / `placement_class`, plus
-//! the `facet` and `placeable_under` concrete-param shortcuts.
+//! The agent exposes one generic search endpoint (see
+//! `agent/docs/design/ANALYTICS.md` § "Global search"). This module is
+//! an ergonomic wrapper: callers keep saying `client.kinds().list(...)`
+//! and the wrapper routes the request through `/search` and unwraps
+//! the `{ scope, hits, meta }` envelope.
+
+use serde::Deserialize;
 
 use crate::error::ClientError;
 use crate::http::HttpClient;
@@ -29,6 +32,23 @@ pub struct ListKindsOptions<'a> {
     pub placeable_under: Option<&'a str>,
 }
 
+/// Envelope the server emits. Client wrappers unwrap `hits` so existing
+/// call sites keep receiving `Vec<KindDto>`.
+#[derive(Debug, Deserialize)]
+struct SearchEnvelope<T> {
+    #[allow(dead_code)]
+    scope: String,
+    hits: Vec<T>,
+    #[allow(dead_code)]
+    meta: SearchMeta,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchMeta {
+    #[allow(dead_code)]
+    total: usize,
+}
+
 impl<'c> Kinds<'c> {
     pub(crate) fn new(http: &'c HttpClient, api_version: u32) -> Self {
         Self {
@@ -38,8 +58,7 @@ impl<'c> Kinds<'c> {
     }
 
     /// Back-compat shortcut: `list(facet, placeable_under)`. Prefer
-    /// [`Self::list_with`] for new code — it accepts the full query
-    /// surface in one options struct.
+    /// [`Self::list_with`] for new code.
     pub async fn list(
         &self,
         facet: Option<&str>,
@@ -55,7 +74,7 @@ impl<'c> Kinds<'c> {
 
     /// Full-surface list. Empty options = "everything".
     pub async fn list_with(&self, opts: ListKindsOptions<'_>) -> Result<Vec<KindDto>, ClientError> {
-        let mut parts: Vec<String> = Vec::new();
+        let mut parts: Vec<String> = vec!["scope=kinds".to_string()];
         if let Some(v) = opts.filter {
             parts.push(format!("filter={}", encode_value(v)));
         }
@@ -68,12 +87,9 @@ impl<'c> Kinds<'c> {
         if let Some(v) = opts.placeable_under {
             parts.push(format!("placeable_under={}", encode_value(v)));
         }
-        let path = if parts.is_empty() {
-            format!("{}/kinds", self.base)
-        } else {
-            format!("{}/kinds?{}", self.base, parts.join("&"))
-        };
-        self.http.get::<Vec<KindDto>>(&path).await
+        let path = format!("{}/search?{}", self.base, parts.join("&"));
+        let envelope: SearchEnvelope<KindDto> = self.http.get(&path).await?;
+        Ok(envelope.hits)
     }
 }
 

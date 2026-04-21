@@ -413,7 +413,7 @@ pub struct NodeSchema {
     pub slots: Vec<SlotSchema>,
 }
 
-/// Wire shape for `GET /api/v1/kinds`.
+/// Wire shape for rows returned by `GET /api/v1/search?scope=kinds`.
 ///
 /// The server flattens `KindManifest` so all its fields appear at the
 /// top level alongside `placement_class`.
