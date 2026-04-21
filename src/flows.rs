@@ -23,12 +23,27 @@
 //! # }
 //! ```
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::error::ClientError;
 use crate::http::HttpClient;
 use crate::types::{FlowDto, FlowMutationResult, FlowRevisionDto};
+
+#[derive(Debug, Deserialize)]
+struct SearchEnvelope<T> {
+    #[allow(dead_code)]
+    scope: String,
+    hits: Vec<T>,
+    #[allow(dead_code)]
+    meta: SearchMeta,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchMeta {
+    #[allow(dead_code)]
+    total: usize,
+}
 
 pub struct Flows<'c> {
     http: &'c HttpClient,
@@ -89,27 +104,34 @@ struct RevertBody<'a> {
 // ── Methods ───────────────────────────────────────────────────────────────────
 
 impl<'c> Flows<'c> {
-    /// List all flows, newest-first by `head_seq`.
+    /// List flows via the generic search endpoint. The palette
+    /// response omits the full `document` blob for each flow — callers
+    /// that need the document fetch it via [`Self::get`].
     ///
-    /// `limit` defaults to 50; `offset` defaults to 0.
+    /// `limit` / `offset` map to the generic `page`/`size` semantics:
+    /// a given `limit` becomes `size=<limit>` on page 1, and
+    /// `offset` shifts the page window (`offset` = `(page-1)*size`).
+    /// Both default to the server's defaults when `None`.
     pub async fn list(
         &self,
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<FlowDto>, ClientError> {
-        let mut parts: Vec<String> = Vec::new();
-        if let Some(l) = limit {
-            parts.push(format!("limit={l}"));
-        }
-        if let Some(o) = offset {
-            parts.push(format!("offset={o}"));
-        }
-        let path = if parts.is_empty() {
-            format!("{}/flows", self.base)
-        } else {
-            format!("{}/flows?{}", self.base, parts.join("&"))
+        let size = limit;
+        let page = match (limit, offset) {
+            (Some(l), Some(o)) if l > 0 => Some(o / l + 1),
+            _ => None,
         };
-        self.http.get::<Vec<FlowDto>>(&path).await
+        let mut parts: Vec<String> = vec!["scope=flows".to_string()];
+        if let Some(s) = size {
+            parts.push(format!("size={s}"));
+        }
+        if let Some(p) = page {
+            parts.push(format!("page={p}"));
+        }
+        let path = format!("{}/search?{}", self.base, parts.join("&"));
+        let envelope: SearchEnvelope<FlowDto> = self.http.get(&path).await?;
+        Ok(envelope.hits)
     }
 
     /// Fetch one flow by id.

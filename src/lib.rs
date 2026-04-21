@@ -32,6 +32,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::panic))]
 
 mod ai;
+mod analyze;
 mod auth;
 mod blocks;
 mod capabilities;
@@ -50,6 +51,7 @@ pub mod types;
 mod ui;
 mod users;
 
+pub use analyze::{AnalyzeMeta, AnalyzeRequest, AnalyzeResponse};
 pub use capabilities::CapabilityRequirement;
 pub use error::ClientError;
 pub use kinds::ListKindsOptions;
@@ -155,6 +157,10 @@ impl AgentClient {
 
     pub fn ai(&self) -> ai::Ai<'_> {
         ai::Ai::new(&self.http, API_VERSION)
+    }
+
+    pub fn analyze(&self) -> analyze::Analyze<'_> {
+        analyze::Analyze::new(&self.http, API_VERSION)
     }
 
     pub fn users(&self) -> users::Users<'_> {

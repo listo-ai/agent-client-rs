@@ -121,6 +121,11 @@ pub struct Link {
     pub id: String,
     pub source: LinkEndpoint,
     pub target: LinkEndpoint,
+    /// Shared parent path of the two endpoints — the "scope" of the
+    /// link. `None` when the endpoints diverge at the root. Optional
+    /// so older agents that don't emit the field still parse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -1199,7 +1204,7 @@ pub struct WhoAmIDto {
 
 // ---- flows ----------------------------------------------------------------
 
-/// Mirror of `GET /api/v1/flows` and `GET /api/v1/flows/:id`.
+/// Mirror of palette rows from `GET /api/v1/search?scope=flows` and the full document from `GET /api/v1/flows/:id`.
 ///
 /// `document` is the raw JSON flow payload — opaque to the client.
 /// `head_revision_id` is `null` only on a brand-new flow before any
@@ -1209,9 +1214,17 @@ pub struct WhoAmIDto {
 pub struct FlowDto {
     pub id: String,
     pub name: String,
+    /// The flow's JSON document. Absent in `/search?scope=flows` hits
+    /// (the palette surface omits the document blob); present in
+    /// `GET /api/v1/flows/:id` responses.
+    #[serde(default, skip_serializing_if = "is_null")]
     pub document: JsonValue,
     pub head_revision_id: Option<String>,
     pub head_seq: i64,
+}
+
+fn is_null(v: &JsonValue) -> bool {
+    v.is_null()
 }
 
 /// Mirror of `GET /api/v1/flows/:id/revisions` entries.

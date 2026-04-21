@@ -1,4 +1,7 @@
-//! Block operations — `GET/POST /api/v1/blocks`.
+//! Block operations — listing via `/api/v1/search?scope=blocks`, the
+//! rest via dedicated `/api/v1/blocks/:id/...` routes.
+
+use serde::Deserialize;
 
 use crate::error::ClientError;
 use crate::http::HttpClient;
@@ -9,6 +12,21 @@ pub struct Plugins<'c> {
     base: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct SearchEnvelope<T> {
+    #[allow(dead_code)]
+    scope: String,
+    hits: Vec<T>,
+    #[allow(dead_code)]
+    meta: SearchMeta,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchMeta {
+    #[allow(dead_code)]
+    total: usize,
+}
+
 impl<'c> Plugins<'c> {
     pub(crate) fn new(http: &'c HttpClient, api_version: u32) -> Self {
         Self {
@@ -17,11 +35,13 @@ impl<'c> Plugins<'c> {
         }
     }
 
-    /// List all loaded blocks.
+    /// List all loaded blocks via the generic search endpoint.
     pub async fn list(&self) -> Result<Vec<PluginSummary>, ClientError> {
-        self.http
-            .get::<Vec<PluginSummary>>(&format!("{}/blocks", self.base))
-            .await
+        let envelope: SearchEnvelope<PluginSummary> = self
+            .http
+            .get(&format!("{}/search?scope=blocks", self.base))
+            .await?;
+        Ok(envelope.hits)
     }
 
     /// Get a single block by its id.

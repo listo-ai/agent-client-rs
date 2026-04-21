@@ -1,11 +1,16 @@
-//! Node operations — `GET /api/v1/nodes`, `GET /api/v1/node?path=…`,
-//! `POST /api/v1/nodes`.
+//! Node operations.
+//!
+//! Listing goes through the generic search endpoint —
+//! `GET /api/v1/search?scope=nodes` — and this wrapper unwraps the
+//! envelope so callers keep receiving `NodeListResponse` /
+//! `Vec<NodeSnapshot>`. Single-node reads and writes keep their
+//! dedicated routes (`/api/v1/node`, `POST /api/v1/nodes`).
+
+use serde::{Deserialize, Serialize};
 
 use crate::error::ClientError;
 use crate::http::HttpClient;
-use crate::types::{CreatedNode, NodeListResponse, NodeSchema, NodeSnapshot};
-
-use serde::Serialize;
+use crate::types::{CreatedNode, NodeListResponse, NodeSchema, NodeSnapshot, PageMeta};
 
 #[derive(Serialize)]
 struct CreateNodeReq<'a> {
@@ -27,6 +32,27 @@ pub struct NodeListParams {
     pub size: Option<u64>,
 }
 
+/// Envelope emitted by `/api/v1/search`. Pagination fields are optional
+/// per-scope; the `nodes` scope always populates them.
+#[derive(Debug, Deserialize)]
+struct SearchEnvelope<T> {
+    #[allow(dead_code)]
+    scope: String,
+    hits: Vec<T>,
+    meta: SearchMeta,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchMeta {
+    total: u64,
+    #[serde(default)]
+    page: Option<u64>,
+    #[serde(default)]
+    size: Option<u64>,
+    #[serde(default)]
+    pages: Option<u64>,
+}
+
 impl<'c> Nodes<'c> {
     pub(crate) fn new(http: &'c HttpClient, api_version: u32) -> Self {
         Self {
@@ -35,17 +61,18 @@ impl<'c> Nodes<'c> {
         }
     }
 
-    /// List every node in the graph.
+    /// List every node in the graph (no pagination).
     pub async fn list(&self) -> Result<Vec<NodeSnapshot>, ClientError> {
         Ok(self.list_page(&NodeListParams::default()).await?.data)
     }
 
-    /// List nodes using the generic query params surface.
+    /// List nodes via the generic search surface, preserving the
+    /// existing `NodeListResponse` shape with pagination meta.
     pub async fn list_page(
         &self,
         params: &NodeListParams,
     ) -> Result<NodeListResponse, ClientError> {
-        let mut query = Vec::new();
+        let mut query: Vec<(&str, String)> = vec![("scope", "nodes".to_string())];
         if let Some(filter) = &params.filter {
             query.push(("filter", filter.clone()));
         }
@@ -58,9 +85,22 @@ impl<'c> Nodes<'c> {
         if let Some(size) = params.size {
             query.push(("size", size.to_string()));
         }
-        self.http
-            .get_query::<NodeListResponse>(&format!("{}/nodes", self.base), &query)
-            .await
+        let envelope: SearchEnvelope<NodeSnapshot> = self
+            .http
+            .get_query(&format!("{}/search", self.base), &query)
+            .await?;
+        Ok(NodeListResponse {
+            data: envelope.hits,
+            meta: PageMeta {
+                total: envelope.meta.total,
+                page: envelope.meta.page.unwrap_or(1),
+                size: envelope
+                    .meta
+                    .size
+                    .unwrap_or(envelope.meta.total.max(1)),
+                pages: envelope.meta.pages.unwrap_or(1),
+            },
+        })
     }
 
     /// Get a single node by its canonical path (e.g. `/station/floor1/ahu-5`).
@@ -71,15 +111,7 @@ impl<'c> Nodes<'c> {
             .await
     }
 
-    /// Get the kind-declared slot schemas for one node. Lets a client
-    /// answer "what slots does this node have, and what shape does
-    /// each carry?" without cross-referencing the full kind registry.
-    ///
-    /// Internal bookkeeping slots (marked `is_internal` in the
-    /// manifest) are filtered out by default — pass `include_internal:
-    /// true` to see them.
-    ///
-    /// Example: `client.nodes().schema("/flow-1/heartbeat", false).await?`.
+    /// Get the kind-declared slot schemas for one node.
     pub async fn schema(
         &self,
         path: &str,
@@ -117,11 +149,7 @@ impl<'c> Nodes<'c> {
     }
 }
 
-/// Percent-encode only the characters that matter for a query-string
-/// value. Node paths are `/a/b/c` — slashes are safe in query values
-/// but spaces and special characters need encoding.
 fn urlencoding_path(s: &str) -> String {
-    // Minimal encoding: spaces and a few others.
     s.replace(' ', "%20")
         .replace('#', "%23")
         .replace('&', "%26")
