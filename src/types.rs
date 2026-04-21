@@ -302,6 +302,7 @@ pub enum Facet {
     IsFlow,
     #[serde(rename = "isIO")]
     IsIo,
+    IsAnywhere,
 }
 
 /// `snake_case` on the wire — mirrors `spi::TriggerPolicy`.
@@ -438,6 +439,12 @@ pub struct KindDto {
     pub schema_version: u32,
     /// `"free"` or `"bound"` based on containment rules.
     pub placement_class: String,
+    /// Publisher namespace derived from `id`: first two dot-segments
+    /// joined (e.g. `com.listo.mqtt-client.client` → `com.listo`,
+    /// `sys.logic.heartbeat` → `sys.logic`). Optional + defaulted so
+    /// an older agent that doesn't emit the field still parses.
+    #[serde(default)]
+    pub org: String,
 }
 
 fn default_schema_version() -> u32 {

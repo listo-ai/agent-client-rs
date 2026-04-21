@@ -52,6 +52,7 @@ mod users;
 
 pub use capabilities::CapabilityRequirement;
 pub use error::ClientError;
+pub use kinds::ListKindsOptions;
 pub use nodes::NodeListParams;
 
 use crate::http::HttpClient;
