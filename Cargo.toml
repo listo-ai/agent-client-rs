@@ -8,6 +8,9 @@ publish = true
 description = "Reusable Rust HTTP client for the listo agent REST API"
 repository = "https://github.com/listo-ai/agent-client-rs"
 
+[lib]
+name = "agent_client"
+
 [lints.rust]
 unsafe_code = "forbid"
 unused_must_use = "deny"
