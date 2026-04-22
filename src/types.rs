@@ -53,6 +53,17 @@ pub struct Slot {
     pub name: String,
     pub value: JsonValue,
     pub generation: u64,
+    /// Physical quantity, if declared on the slot's manifest. Carried
+    /// so clients can format per the caller's preferences without a
+    /// second round-trip. Serialised as the snake-case string form
+    /// (e.g. `"temperature"`); absent for dimensionless slots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantity: Option<String>,
+    /// Unit the stored `value` is expressed in, if declared. `None`
+    /// means "canonical for `quantity`"; clients resolve via
+    /// `GET /api/v1/units` and apply the conversion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -405,6 +416,19 @@ pub struct SlotSchema {
     pub is_internal: bool,
     #[serde(default)]
     pub emit_on_init: bool,
+    /// Physical quantity this slot measures, if declared. `None` for
+    /// dimensionless slots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantity: Option<String>,
+    /// Unit the sensor natively emits; the ingest pipeline converts
+    /// from this to the quantity's canonical unit before storage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sensor_unit: Option<String>,
+    /// Unit the stored value is expressed in. `None` = canonical for
+    /// the quantity. Set only when the slot opted out of ingest-time
+    /// conversion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
 }
 
 /// Wire shape for `GET /api/v1/node/schema` — a single node's kind-
@@ -1206,14 +1230,48 @@ pub struct WhoAmIDto {
 
 // ---- units registry -------------------------------------------------------
 
-/// One entry in [`UnitRegistryDto`]. Server-side shape lives in
-/// `spi::QuantityEntry`; this is the wire-side mirror.
+/// One entry in [`UnitRegistryDto::quantities`]. Server-side shape
+/// lives in `spi::QuantityEntry`; this is the wire-side mirror.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct QuantityEntryDto {
+    /// Snake-case quantity id, e.g. `"temperature"`.
     pub id: String,
+    /// Human-friendly English name — `"Temperature"`, `"Flow rate"`.
+    /// Locale-aware rendering is the client's concern; this is the
+    /// CLI/log fallback.
+    #[serde(default)]
+    pub label: String,
     pub canonical: String,
     pub allowed: Vec<String>,
     pub symbol: String,
+}
+
+/// One entry in [`UnitRegistryDto::units`] — a flat table of every
+/// unit with its compact symbol, human-friendly label, and affine
+/// conversion coefficients to the quantity's canonical unit.
+/// Server-side shape in `spi::UnitEntry`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct UnitEntryDto {
+    /// Snake-case unit id, e.g. `"celsius"`, `"cubic_meters_per_hour"`.
+    pub id: String,
+    /// Compact symbol — `"°C"`, `"L/s"`, `"psi"`. Empty for
+    /// dimensionless (`ratio`).
+    pub symbol: String,
+    /// Human-friendly English name — `"Degrees Celsius"`, `"Pounds
+    /// per square inch"`.
+    pub label: String,
+    /// Affine conversion coefficients to the quantity's canonical
+    /// unit: `canonical = scale * value + offset`. Absent for units
+    /// that genuinely have no conversion (none today).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_canonical: Option<AffineCoeffsDto>,
+}
+
+/// Affine conversion coefficients. Mirrors `spi::AffineCoeffs`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AffineCoeffsDto {
+    pub scale: f64,
+    pub offset: f64,
 }
 
 /// Wire shape of `GET /api/v1/units`. Clients drive their unit-picker
@@ -1222,6 +1280,10 @@ pub struct QuantityEntryDto {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UnitRegistryDto {
     pub quantities: Vec<QuantityEntryDto>,
+    /// Flat table of every unit the registry exposes. Added field —
+    /// existing clients that ignore unknown fields keep working.
+    #[serde(default)]
+    pub units: Vec<UnitEntryDto>,
 }
 
 // ---- preferences ----------------------------------------------------------

@@ -34,6 +34,7 @@
 mod ai;
 mod analyze;
 mod auth;
+mod backup;
 mod blocks;
 mod search;
 mod capabilities;
@@ -61,8 +62,9 @@ pub use kinds::ListKindsOptions;
 pub use nodes::NodeListParams;
 pub use search::{SearchEnvelope, SearchMeta, SearchParams};
 pub use types::{
-    EnrollRequest, EnrollResponse, MaybeUpdate, OrgPreferences, PreferencesPatch,
-    QuantityEntryDto, ResolvedPreferences, SetupRequest, SetupResponse, UnitRegistryDto,
+    AffineCoeffsDto, EnrollRequest, EnrollResponse, MaybeUpdate, OrgPreferences, PreferencesPatch,
+    QuantityEntryDto, ResolvedPreferences, SetupRequest, SetupResponse, UnitEntryDto,
+    UnitRegistryDto,
 };
 
 use crate::http::HttpClient;
@@ -189,5 +191,10 @@ impl AgentClient {
 
     pub fn users(&self) -> users::Users<'_> {
         users::Users::new(&self.http, API_VERSION)
+    }
+
+    /// Backup & restore operations — snapshot export/import.
+    pub fn backup(&self) -> backup::Backup<'_> {
+        backup::Backup::new(&self.http, API_VERSION)
     }
 }
