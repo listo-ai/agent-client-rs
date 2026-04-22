@@ -83,6 +83,16 @@ impl HttpClient {
         handle_empty(res).await
     }
 
+    pub async fn patch<T: DeserializeOwned, B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T, ClientError> {
+        let req = self.apply_auth(self.client.patch(self.url(path)).json(body));
+        let res = req.send().await?;
+        handle_json(res).await
+    }
+
     pub async fn delete(&self, path: &str) -> Result<(), ClientError> {
         let req = self.apply_auth(self.client.delete(self.url(path)));
         let res = req.send().await?;

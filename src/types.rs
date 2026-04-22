@@ -1204,6 +1204,247 @@ pub struct WhoAmIDto {
 
 // ---- flows ----------------------------------------------------------------
 
+// ---- units registry -------------------------------------------------------
+
+/// One entry in [`UnitRegistryDto`]. Server-side shape lives in
+/// `spi::QuantityEntry`; this is the wire-side mirror.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct QuantityEntryDto {
+    pub id: String,
+    pub canonical: String,
+    pub allowed: Vec<String>,
+    pub symbol: String,
+}
+
+/// Wire shape of `GET /api/v1/units`. Clients drive their unit-picker
+/// UIs off this plus client-side preference state. See
+/// `agent/docs/design/USER-PREFERENCES.md` § "API surface".
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct UnitRegistryDto {
+    pub quantities: Vec<QuantityEntryDto>,
+}
+
+// ---- preferences ----------------------------------------------------------
+
+/// Fully-resolved preferences for the caller, with every layer
+/// merged: `user ?? org ?? system_default`. No field is ever `null`
+/// or `"auto"` after resolution — those are rendering hints that the
+/// client expands via locale. See `agent/docs/design/USER-PREFERENCES.md`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ResolvedPreferences {
+    pub timezone: String,
+    pub locale: String,
+    pub language: String,
+    pub unit_system: String,
+    pub temperature_unit: String,
+    pub pressure_unit: String,
+    pub date_format: String,
+    pub time_format: String,
+    pub week_start: String,
+    pub number_format: String,
+    pub currency: String,
+    pub theme: String,
+}
+
+/// Organisation-level preferences row. All fields are optional —
+/// `None` means "not set at this layer, inherit from system defaults".
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct OrgPreferences {
+    pub org_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_system: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature_unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pressure_unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_format: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_format: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub week_start: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_format: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    /// UTC epoch milliseconds — see USER-PREFERENCES.md § Time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+/// Sparse PATCH body. Mirrors the server's `MaybeUpdate` tri-state so
+/// the Rust client can express the full wire semantics:
+///
+/// | [`MaybeUpdate`] variant | On the wire |
+/// |---|---|
+/// | [`MaybeUpdate::Absent`] | field omitted entirely — server leaves stored value unchanged |
+/// | [`MaybeUpdate::Clear`]  | `null` — server reverts user layer to inherit from org |
+/// | [`MaybeUpdate::Set(v)`] | string value — server writes `v` |
+///
+/// The [`PreferencesPatch::set`] / [`PreferencesPatch::clear`] helpers
+/// cover the common flows by field name, but callers can also
+/// construct the struct explicitly for type-checked field access.
+#[derive(Debug, Clone, Default, Serialize, JsonSchema)]
+pub struct PreferencesPatch {
+    #[serde(skip_serializing_if = "MaybeUpdate::is_absent")]
+    pub timezone: MaybeUpdate,
+    #[serde(skip_serializing_if = "MaybeUpdate::is_absent")]
+    pub locale: MaybeUpdate,
+    #[serde(skip_serializing_if = "MaybeUpdate::is_absent")]
+    pub language: MaybeUpdate,
+    #[serde(skip_serializing_if = "MaybeUpdate::is_absent")]
+    pub unit_system: MaybeUpdate,
+    #[serde(skip_serializing_if = "MaybeUpdate::is_absent")]
+    pub temperature_unit: MaybeUpdate,
+    #[serde(skip_serializing_if = "MaybeUpdate::is_absent")]
+    pub pressure_unit: MaybeUpdate,
+    #[serde(skip_serializing_if = "MaybeUpdate::is_absent")]
+    pub date_format: MaybeUpdate,
+    #[serde(skip_serializing_if = "MaybeUpdate::is_absent")]
+    pub time_format: MaybeUpdate,
+    #[serde(skip_serializing_if = "MaybeUpdate::is_absent")]
+    pub week_start: MaybeUpdate,
+    #[serde(skip_serializing_if = "MaybeUpdate::is_absent")]
+    pub number_format: MaybeUpdate,
+    #[serde(skip_serializing_if = "MaybeUpdate::is_absent")]
+    pub currency: MaybeUpdate,
+    #[serde(skip_serializing_if = "MaybeUpdate::is_absent")]
+    pub theme: MaybeUpdate,
+}
+
+/// Tri-state for a PATCH field. See [`PreferencesPatch`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+pub enum MaybeUpdate {
+    /// Not present in the patch at all — server leaves the stored value unchanged.
+    #[default]
+    Absent,
+    /// Explicit `null` — server reverts the user layer to inherit from org / defaults.
+    Clear,
+    /// New value.
+    Set(String),
+}
+
+impl MaybeUpdate {
+    pub fn is_absent(&self) -> bool {
+        matches!(self, MaybeUpdate::Absent)
+    }
+}
+
+impl Serialize for MaybeUpdate {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            // `Absent` is filtered out by `skip_serializing_if` on every
+            // PreferencesPatch field, so hitting this arm means a caller
+            // stuck a MaybeUpdate somewhere it isn't gated. Emit `null`
+            // defensively rather than panicking.
+            MaybeUpdate::Absent | MaybeUpdate::Clear => s.serialize_none(),
+            MaybeUpdate::Set(v) => s.serialize_some(v),
+        }
+    }
+}
+
+impl PreferencesPatch {
+    /// Set `field` to `value`. Unknown field names panic in debug,
+    /// silently no-op in release — match the field names exactly as
+    /// declared on [`PreferencesPatch`].
+    pub fn set(mut self, field: &str, value: impl Into<String>) -> Self {
+        let v = MaybeUpdate::Set(value.into());
+        self.apply(field, v);
+        self
+    }
+
+    /// Clear `field` so the next layer (org / system default) takes
+    /// over on the server. Unknown field names panic in debug.
+    pub fn clear(mut self, field: &str) -> Self {
+        self.apply(field, MaybeUpdate::Clear);
+        self
+    }
+
+    fn apply(&mut self, field: &str, v: MaybeUpdate) {
+        match field {
+            "timezone" => self.timezone = v,
+            "locale" => self.locale = v,
+            "language" => self.language = v,
+            "unit_system" => self.unit_system = v,
+            "temperature_unit" => self.temperature_unit = v,
+            "pressure_unit" => self.pressure_unit = v,
+            "date_format" => self.date_format = v,
+            "time_format" => self.time_format = v,
+            "week_start" => self.week_start = v,
+            "number_format" => self.number_format = v,
+            "currency" => self.currency = v,
+            "theme" => self.theme = v,
+            other => {
+                debug_assert!(false, "unknown preferences field `{other}`");
+                let _ = other;
+            }
+        }
+    }
+}
+
+// ---- setup / enroll -------------------------------------------------------
+
+/// Request body for `POST /api/v1/auth/setup`. Tagged on `mode`; only
+/// the variant that matches `/agent/setup.mode` is accepted, so the
+/// wire shape is a discriminated union.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum SetupRequest {
+    Cloud {
+        org_name: String,
+        admin_email: String,
+        /// Ignored in Phase A; Phase B begins verifying against it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        admin_password: Option<String>,
+    },
+    Edge {},
+    Standalone {},
+}
+
+/// Response from a successful `POST /api/v1/auth/setup`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SetupResponse {
+    /// `"ok"` on success. The type is a concrete string (not enum) so
+    /// additive status values in future stages don't break old clients.
+    pub status: String,
+    /// Bearer token. Send as `Authorization: Bearer <token>` on every
+    /// subsequent request. Store it safely — if the agent wrote
+    /// `agent.yaml` it is recoverable from the `static_token` entry;
+    /// in `--config` mode (see `config_snippet`) it must be pasted
+    /// into the operator's config file or it will not survive
+    /// a restart.
+    pub token: String,
+    pub advice: String,
+    /// YAML snippet to paste into the operator's config file. Present
+    /// only when the agent was launched with `--config <path>`; absent
+    /// when the agent wrote `agent.yaml` for you.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_snippet: Option<String>,
+}
+
+/// Request body for `POST /api/v1/auth/enroll`. Edge-only. See
+/// SYSTEM-BOOTSTRAP.md — Phase A returns 501 and the cloud-side
+/// handler lands in Phase B.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EnrollRequest {
+    pub cloud_url: String,
+    pub enrollment_token: String,
+}
+
+/// Response from a successful `POST /api/v1/auth/enroll` (Phase B).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EnrollResponse {
+    pub status: String,
+    pub tenant_id: String,
+    pub agent_id: String,
+}
+
 /// Mirror of palette rows from `GET /api/v1/search?scope=flows` and the full document from `GET /api/v1/flows/:id`.
 ///
 /// `document` is the raw JSON flow payload — opaque to the client.

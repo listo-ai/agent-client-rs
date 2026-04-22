@@ -35,6 +35,7 @@ mod ai;
 mod analyze;
 mod auth;
 mod blocks;
+mod search;
 mod capabilities;
 mod config;
 mod error;
@@ -45,8 +46,10 @@ mod kinds;
 mod lifecycle;
 mod links;
 mod nodes;
+mod preferences;
 mod seed;
 mod slots;
+mod units;
 pub mod types;
 mod ui;
 mod users;
@@ -56,6 +59,11 @@ pub use capabilities::CapabilityRequirement;
 pub use error::ClientError;
 pub use kinds::ListKindsOptions;
 pub use nodes::NodeListParams;
+pub use search::{SearchEnvelope, SearchMeta, SearchParams};
+pub use types::{
+    EnrollRequest, EnrollResponse, MaybeUpdate, OrgPreferences, PreferencesPatch,
+    QuantityEntryDto, ResolvedPreferences, SetupRequest, SetupResponse, UnitRegistryDto,
+};
 
 use crate::http::HttpClient;
 
@@ -147,6 +155,18 @@ impl AgentClient {
         auth::Auth::new(&self.http, API_VERSION)
     }
 
+    /// User + organisation preferences — see
+    /// `agent/docs/design/USER-PREFERENCES.md`.
+    pub fn preferences(&self) -> preferences::Preferences<'_> {
+        preferences::Preferences::new(&self.http, API_VERSION)
+    }
+
+    /// Public quantity / unit registry (`GET /api/v1/units`). Cache
+    /// freely — the registry is static per platform release.
+    pub fn units(&self) -> units::Units<'_> {
+        units::Units::new(&self.http, API_VERSION)
+    }
+
     pub fn ui(&self) -> ui::Ui<'_> {
         ui::Ui::new(&self.http, API_VERSION)
     }
@@ -161,6 +181,10 @@ impl AgentClient {
 
     pub fn analyze(&self) -> analyze::Analyze<'_> {
         analyze::Analyze::new(&self.http, API_VERSION)
+    }
+
+    pub fn search(&self) -> search::Search<'_> {
+        search::Search::new(&self.http, API_VERSION)
     }
 
     pub fn users(&self) -> users::Users<'_> {
